@@ -508,7 +508,12 @@ const TK_STORE_INDEX: usize = 0b10 << BITS_PER_ID;
 const TK_MATCH_EXACT: usize = 0b00 << BITS_PER_ID;
 const TK_MATCH_CUSTOM: usize = 0b01 << BITS_PER_ID;
 
-const TK_MAX_EXPRESSION_SIZE: usize = 1 << 10;
+// The value bits are split in half: values below TK_MAX_EXPRESSION_SIZE are
+// expression starts (the value is the number of children), values from it up
+// are atom ids shifted by TK_MAX_EXPRESSION_SIZE. Each half holds 2^61 values
+// on 64-bit targets and 2^29 on 32-bit ones. The split used to be at 1024,
+// which made any expression with 1024 or more children abort.
+const TK_MAX_EXPRESSION_SIZE: usize = 1 << (BITS_PER_ID - 1);
 
 /// Compact representation of the atom from the trie. It represents each
 /// atom using single [usize] value. It keeps value of the key, key matching
