@@ -664,4 +664,44 @@ mod test {
         let actual: Vec<_> = index.query(&expr!("A" "B" "C")).collect();
         assert_eq_no_order!(actual, vec![bind!{ x: expr!("A" "B" "C") }]);
     }
+    // Few distinct symbols, so the width of the expression grows without the
+    // number of distinct atoms crossing 1024 (ids are a separate limit).
+    fn wide_expr(width: usize) -> Atom {
+        Atom::expr((0..width).map(|i| Atom::sym(format!("s{}", i % 7))).collect::<Vec<_>>())
+    }
+
+    // An expression with 1024 or more children used to abort in
+    // TrieKey::start_expr: expression sizes and atom ids shared one value
+    // range split at 1024.
+    #[test]
+    fn atom_index_wide_expressions() {
+        let eq = |lhs: Atom, rhs: Atom| Atom::expr([sym!("="), lhs, rhs]);
+        for width in [1023, 1024, 1025, 1100] {
+            let wide = wide_expr(width);
+            let fact = eq(expr!("f" x), wide.clone());
+            let mut index = AtomIndex::new();
+            index.insert(fact.clone());
+            index.insert(expr!("A" "B"));
+
+            let found: Vec<Bindings> = index.query(&eq(expr!("f" "a"), expr!(y))).map(plain_vars).collect();
+            assert_eq!(found.len(), 1, "width {}", width);
+            assert_eq!(found[0].resolve(&VariableAtom::new("x")), Some(sym!("a")), "width {}", width);
+            assert_eq!(found[0].resolve(&VariableAtom::new("y")), Some(wide.clone()), "width {}", width);
+            assert_eq_bind_no_order!(index.query(&eq(expr!(z), wide.clone())),
+                vec![bind!{ z: expr!("f" x) }]);
+            let mut other = wide_expr(width - 1);
+            assert!(index.query(&eq(expr!(z), other.clone())).next().is_none(),
+                "width {}: a narrower expression must not match", width);
+            if let Atom::Expression(e) = &mut other {
+                e.children_mut().push(Atom::sym("other"));
+            }
+            assert!(index.query(&eq(expr!(z), other)).next().is_none(),
+                "width {}: a different last child must not match", width);
+            assert_eq_no_order!(index.iter().map(|a| a.into_owned()).collect::<Vec<_>>(),
+                vec![fact.clone(), expr!("A" "B")]);
+            assert!(index.remove(&fact), "width {}", width);
+            assert_eq_no_order!(index.iter().map(|a| a.into_owned()).collect::<Vec<_>>(),
+                vec![expr!("A" "B")]);
+        }
+    }
 }

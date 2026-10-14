@@ -927,4 +927,22 @@ mod test {
     fn atom_trie_trie_key_size() {
         assert_eq!(std::mem::size_of::<TrieKey>(), std::mem::size_of::<usize>());
     }
+    #[test]
+    fn atom_trie_trie_key_expression_start_and_atom_ids_do_not_collide() {
+        for size in [0, 1, 1023, 1024, 1025, 1 << 20] {
+            let start = TrieKey::start_expr(size);
+            assert_eq!(start.as_start_expr(), Some(size));
+            for id in [0, 1, 1023, 1024, size] {
+                for store in [TrieKeyStore::Hash, TrieKeyStore::Index] {
+                    for mode in [AtomMatchMode::Equality, AtomMatchMode::Unification] {
+                        let key = TrieKey::new(store, mode, id);
+                        assert!(!key.is_start_expr(), "id {} read as an expression start", id);
+                        assert_ne!(key, start);
+                        assert_eq!(key.store(), store);
+                        assert_eq!(key.match_mode(), mode);
+                    }
+                }
+            }
+        }
+    }
 }
