@@ -508,7 +508,12 @@ const TK_STORE_INDEX: usize = 0b10 << BITS_PER_ID;
 const TK_MATCH_EXACT: usize = 0b00 << BITS_PER_ID;
 const TK_MATCH_CUSTOM: usize = 0b01 << BITS_PER_ID;
 
-const TK_MAX_EXPRESSION_SIZE: usize = 1 << 10;
+// The value bits are split in half: values below TK_MAX_EXPRESSION_SIZE are
+// expression starts (the value is the number of children), values from it up
+// are atom ids shifted by TK_MAX_EXPRESSION_SIZE. Each half holds 2^61 values
+// on 64-bit targets and 2^29 on 32-bit ones. The split used to be at 1024,
+// which made any expression with 1024 or more children abort.
+const TK_MAX_EXPRESSION_SIZE: usize = 1 << (BITS_PER_ID - 1);
 
 /// Compact representation of the atom from the trie. It represents each
 /// atom using single [usize] value. It keeps value of the key, key matching
@@ -542,7 +547,7 @@ impl TrieKey {
 
     #[inline]
     fn value(&self) -> usize {
-        self.0 & TK_VALUE_MASK - TK_MAX_EXPRESSION_SIZE
+        (self.0 & TK_VALUE_MASK) - TK_MAX_EXPRESSION_SIZE
     }
 
     #[inline]
@@ -926,5 +931,40 @@ mod test {
     #[test]
     fn atom_trie_trie_key_size() {
         assert_eq!(std::mem::size_of::<TrieKey>(), std::mem::size_of::<usize>());
+    }
+    #[test]
+    fn atom_trie_trie_key_expression_start_and_atom_ids_do_not_collide() {
+        for size in [0, 1, 1023, 1024, 1025, 1 << 20] {
+            let start = TrieKey::start_expr(size);
+            assert_eq!(start.as_start_expr(), Some(size));
+            for id in [0, 1, 1023, 1024, size] {
+                for store in [TrieKeyStore::Hash, TrieKeyStore::Index] {
+                    for mode in [AtomMatchMode::Equality, AtomMatchMode::Unification] {
+                        let key = TrieKey::new(store, mode, id);
+                        assert!(!key.is_start_expr(), "id {} read as an expression start", id);
+                        assert_ne!(key, start);
+                        assert_eq!(key.store(), store);
+                        assert_eq!(key.match_mode(), mode);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn atom_trie_trie_key_value_round_trips_past_expression_size() {
+        // TrieKey stores `id + TK_MAX_EXPRESSION_SIZE`; value() must subtract
+        // it again. Before the parentheses fix `a & M - N` parsed as
+        // `a & (M - N)`, so only ids whose bit 10 happened to be set survived.
+        for id in [0usize, 1, 1023, 1024, 1025, 2047, 2048, 3071, 3072, 4095, 5000, 1 << 20] {
+            for store in [TrieKeyStore::Hash, TrieKeyStore::Index] {
+                for mode in [AtomMatchMode::Equality, AtomMatchMode::Unification] {
+                    let key = TrieKey::new(store, mode, id);
+                    assert_eq!(key.value(), id, "{:?} {:?} id {}", store, mode, id);
+                    assert_eq!(key.store(), store);
+                    assert_eq!(key.match_mode(), mode);
+                }
+            }
+        }
     }
 }
