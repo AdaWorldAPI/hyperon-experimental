@@ -547,7 +547,7 @@ impl TrieKey {
 
     #[inline]
     fn value(&self) -> usize {
-        self.0 & TK_VALUE_MASK - TK_MAX_EXPRESSION_SIZE
+        (self.0 & TK_VALUE_MASK) - TK_MAX_EXPRESSION_SIZE
     }
 
     #[inline]
@@ -946,6 +946,23 @@ mod test {
                         assert_eq!(key.store(), store);
                         assert_eq!(key.match_mode(), mode);
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn atom_trie_trie_key_value_round_trips_past_expression_size() {
+        // TrieKey stores `id + TK_MAX_EXPRESSION_SIZE`; value() must subtract
+        // it again. Before the parentheses fix `a & M - N` parsed as
+        // `a & (M - N)`, so only ids whose bit 10 happened to be set survived.
+        for id in [0usize, 1, 1023, 1024, 1025, 2047, 2048, 3071, 3072, 4095, 5000, 1 << 20] {
+            for store in [TrieKeyStore::Hash, TrieKeyStore::Index] {
+                for mode in [AtomMatchMode::Equality, AtomMatchMode::Unification] {
+                    let key = TrieKey::new(store, mode, id);
+                    assert_eq!(key.value(), id, "{:?} {:?} id {}", store, mode, id);
+                    assert_eq!(key.store(), store);
+                    assert_eq!(key.match_mode(), mode);
                 }
             }
         }
